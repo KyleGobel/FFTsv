@@ -40,7 +40,8 @@ public class Person
 ```
 
 ```cs
-var person = new Person {
+var person = new Person 
+{
   FullName = "Kyle Gobel",
   Birthday = new DateTime(1985, 11, 29),
   Id = 10101
@@ -54,8 +55,6 @@ string tsvFile = personArray.ToTsv();
 ```  
 
 
-
-
 You can optionally pass in the a includeHeaders overload
 
 ```cs
@@ -63,3 +62,5 @@ string tsvFile = personArray.ToTsv(includeHeaders: false);
 
 //10101\tKyle Gobel\t1985-11-29T00:00:00.0000000\r\n
 ```
+
+I memoized all the reflection in here, and also the header rows.  The ``Person`` object is very trivial, but it can serialize about 10,000 of these a second.  I dont' know if this is good or bad.  I'll have to run benchmarks on other methods and improve on this
