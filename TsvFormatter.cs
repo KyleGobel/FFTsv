@@ -31,9 +31,11 @@ namespace TsvFormatter
             Delimiter = "\t";
             LineEnding = Environment.NewLine;
             DateTimeSerializeFn = dt => dt.ToString("O");
+            ReplaceDelimiterInValuesWith = " ";
         }
         public static string Delimiter { get; set; }
         public static string LineEnding { get; set; }
+        public static string ReplaceDelimiterInValuesWith { get; set; }
         public static Func<DateTime, string> DateTimeSerializeFn { get; set; }   
     }
     public class TsvFormatter
@@ -119,7 +121,7 @@ namespace TsvFormatter
             {
                 return TsvConfig.DateTimeSerializeFn((DateTime) item);
             }
-            return item.ToString();
+            return item.ToString().Replace(TsvConfig.Delimiter, TsvConfig.ReplaceDelimiterInValuesWith);
         }
     }
 
