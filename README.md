@@ -1,7 +1,7 @@
 FFTsv
 =====
 
-Fast Functional (mostly) TSV Serializer
+Fast Functional (mostly functional (as in pure functions, no side-effects)) TSV Serializer
 
 All contained in one file..contains my attempt at making a fast tsv serializer.
 
