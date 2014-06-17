@@ -30,13 +30,15 @@ namespace TsvFormatter
         {
             Delimiter = "\t";
             LineEnding = Environment.NewLine;
-            DateTimeSerializeFn = dt => dt.ToString("O");
             ReplaceDelimiterInValuesWith = " ";
+            SerializeFnDictionary = new Dictionary<Type, Func<object, string>>();
+            SerializeFnDictionary[typeof (DateTime)] = obj => ((DateTime) obj).ToString("O");
         }
+        public static Dictionary<Type, Func<object, string>> SerializeFnDictionary { get; set; } 
         public static string Delimiter { get; set; }
         public static string LineEnding { get; set; }
         public static string ReplaceDelimiterInValuesWith { get; set; }
-        public static Func<DateTime, string> DateTimeSerializeFn { get; set; }   
+        //public static Func<DateTime, string> DateTimeSerializeFn { get; set; }   
     }
     public class TsvFormatter
     {
@@ -117,9 +119,11 @@ namespace TsvFormatter
 
         private static string SerializeToString(object item)
         {
-            if (item is DateTime)
+            var type = item.GetType();
+            Func<object, string> serializeFn;
+            if (TsvConfig.SerializeFnDictionary.TryGetValue(type, out serializeFn))
             {
-                return TsvConfig.DateTimeSerializeFn((DateTime) item);
+                return serializeFn(item);
             }
             return item.ToString().Replace(TsvConfig.Delimiter, TsvConfig.ReplaceDelimiterInValuesWith);
         }
