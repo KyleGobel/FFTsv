@@ -123,6 +123,23 @@ namespace TsvFormatter
             }
             return item.ToString().Replace(TsvConfig.Delimiter, TsvConfig.ReplaceDelimiterInValuesWith);
         }
+
+        public static Func<Type, SortedDictionary<int, KeyValuePair<string, Type>>> PropertyNamesDictionary =
+            Memoize<Type, SortedDictionary<int, KeyValuePair<string, Type>>>(type =>
+            {
+                var sd = new SortedDictionary<int, KeyValuePair<string, Type>>();
+                var index = 0;
+                //ugh, this should be a reduce here..breaking my functionalness
+                GetSerializablePropertiesInOrder(type).ForEach(x =>
+                {
+                    sd.Add(index, new KeyValuePair<string, Type>(x, type.GetProperty(x).PropertyType));
+                    index++;
+                });
+
+                return sd;
+            });
+
+
     }
 
     public static class TsvExtensions
@@ -143,6 +160,90 @@ namespace TsvFormatter
         {
             var data = string.Join("", collectionToSerialize.Select(x => x.ToTsvDataRow()));
             return includeHeaders ? string.Concat(TsvFormatter.GetHeaderRow(typeof (T)), data) : data;
+        }
+        public static object GetDefault(Type type)
+        {
+            if (type.IsValueType)
+            {
+                return Activator.CreateInstance(type);
+            }
+            return null;
+        }
+        public static object GetValue(object obj, Type type)
+        {
+            if (obj != null)
+            {
+                if (type == typeof (string))
+                    return obj;
+                var value = GetDefault(type);
+                var methodInfo = (from m in type.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                                  where m.Name == "TryParse"
+                                  select m).FirstOrDefault();
+
+                if (methodInfo == null)
+                    throw new ApplicationException("Unable to find TryParse method!");
+
+                object result = methodInfo.Invoke(null, new object[] { obj, value });
+                if ((result != null) && ((bool)result))
+                {
+                    methodInfo = (from m in type.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                                  where m.Name == "Parse"
+                                  select m).FirstOrDefault();
+                    if (methodInfo == null)
+                        throw new ApplicationException("Unable to find Parse method!");
+                    value = methodInfo.Invoke(null, new object[] { obj });
+                    return value;
+                }
+            }
+
+            return GetDefault(type);
+        }
+        public static T FromTsvRow<T>(this string tsvString) where T : new()
+        {
+            if (string.IsNullOrEmpty(tsvString))
+                return default(T);
+
+            var tsvValues = tsvString.Split(Char.Parse(TsvConfig.Delimiter));
+            var propsDic = TsvFormatter.PropertyNamesDictionary(typeof (T));
+
+            var obj = new T();
+            var type = typeof (T);
+            var index = 0;
+            foreach (var p in propsDic.OrderBy(x => x.Key))
+            {
+                var value = GetValue(tsvValues[index],p.Value.Value);
+                type.GetProperty(p.Value.Key).SetValue(obj, value);
+                index++;
+            }
+
+            return obj;
+        }
+
+
+        public static List<T> FromTsv<T>(this string tsvString, bool stringIncludesHeader = true) where T : new()
+        {
+            if (stringIncludesHeader)
+            {
+                return tsvString.RemoveTsvHeaderRow().Split(new[] { TsvConfig.LineEnding }, StringSplitOptions.None)
+                    .Select(x => x.FromTsvRow<T>())
+                    .ToList();
+            }
+
+            return tsvString.Split(new[] {TsvConfig.LineEnding}, StringSplitOptions.None)
+                .Select(x => x.FromTsvRow<T>())
+                .ToList();
+
+        }
+
+        public static string RemoveTsvHeaderRow(this string tsvStringWithHeader)
+        {
+            if (tsvStringWithHeader.Contains(TsvConfig.LineEnding))
+            {
+                 return tsvStringWithHeader.Substring(
+                        tsvStringWithHeader.IndexOf(TsvConfig.LineEnding + TsvConfig.LineEnding.Length, System.StringComparison.Ordinal));
+
+            }
+            return tsvStringWithHeader;
         }
     }
 }
