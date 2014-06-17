@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Reflection;
+using ServiceStack;
 
 namespace TsvFormatter
 {
@@ -32,9 +33,11 @@ namespace TsvFormatter
             LineEnding = Environment.NewLine;
             ReplaceDelimiterInValuesWith = " ";
             SerializeFnDictionary = new Dictionary<Type, Func<object, string>>();
-            SerializeFnDictionary[typeof (DateTime)] = obj => ((DateTime) obj).ToString("O");
+            SerializeFnDictionary[typeof (DateTime)] = obj => ((DateTime) obj).ToUniversalTime().ToString("O");
+            DeserialzeFnDictionary = new Dictionary<Type, Func<string, object>>();
         }
         public static Dictionary<Type, Func<object, string>> SerializeFnDictionary { get; set; } 
+        public static Dictionary<Type, Func<string, object>> DeserialzeFnDictionary { get; set; } 
         public static string Delimiter { get; set; }
         public static string LineEnding { get; set; }
         public static string ReplaceDelimiterInValuesWith { get; set; }
@@ -58,8 +61,7 @@ namespace TsvFormatter
         }
 
 
-        public static readonly Func<Type, List<string>>
-            GetSerializablePropertiesInOrder = Memoize<Type, List<string>>(
+        public static readonly Func<Type, List<string>> GetSerializablePropertiesInOrder = Memoize<Type, List<string>>(
             t => t.GetProperties()
                 .Where(x => HasOrderAttribute(x))
                 .OrderBy(x => GetOrder(x))
@@ -67,8 +69,7 @@ namespace TsvFormatter
                 .ToList()),
             GetHeaderColumns = Memoize<Type, List<string>>(GetTsvHeaderValues);
 
-        public static readonly Func<Type, string>
-            GetHeaderRow = Memoize<Type, string>(x => MakeTsvRow(GetTsvHeaderValues(x)));
+        public static readonly Func<Type, string> GetHeaderRow = Memoize<Type, string>(x => MakeTsvRow(GetTsvHeaderValues(x)));
 
         private static readonly Func<PropertyInfo, int> GetOrder =
             Memoize<PropertyInfo, int>(t =>
@@ -87,8 +88,8 @@ namespace TsvFormatter
             Memoize<PropertyInfo, bool>(t => t.GetCustomAttributes(false).Any(a => a.GetType().Name == "OrderAttribute")); 
         public static string MakeTsvRow(IEnumerable<string> values)
         {
-            return string.Concat(
-                string.Join(TsvConfig.Delimiter, values), TsvConfig.LineEnding);
+            return String.Concat(
+                String.Join(TsvConfig.Delimiter, values), TsvConfig.LineEnding);
         }
         private static List<string> GetTsvHeaderValues(Type t)
         {
@@ -111,14 +112,16 @@ namespace TsvFormatter
         public static string GetTsvRow<T>(List<string> properties, T obj)
         {
             var type = typeof (T);
+            var dataCols = properties.Select(x => SerializeToString(type.GetProperty(x).GetValue(obj)));
 
-            var tsvRow = string.Join(TsvConfig.Delimiter,
-                properties.Select(x => SerializeToString(type.GetProperty(x).GetValue(obj))));
-            return string.Concat(tsvRow, TsvConfig.LineEnding);
+            var tsvRow = String.Join(TsvConfig.Delimiter,dataCols);
+            return String.Concat(tsvRow, TsvConfig.LineEnding);
         }
 
         private static string SerializeToString(object item)
         {
+            if (item == null)
+                return "";
             var type = item.GetType();
             Func<object, string> serializeFn;
             if (TsvConfig.SerializeFnDictionary.TryGetValue(type, out serializeFn))
@@ -143,41 +146,31 @@ namespace TsvFormatter
                 return sd;
             });
 
-
-    }
-
-    public static class TsvExtensions
-    {
-        public static string ToTsvDataRow<T>(this T objToSerialize) where T : class
+        public static bool IsNullableType(Type type)
         {
-            var properties = TsvFormatter.GetSerializablePropertiesInOrder(typeof (T));
-
-            return TsvFormatter.GetTsvRow(properties, objToSerialize);
+            return type.IsGenericType && type.GetGenericTypeDefinition() == typeof (Nullable<>);
         }
 
-        public static string ToTsvHeaderRow<T>(this T objToSerialize) where T : class
-        {
-            return TsvFormatter.GetHeaderRow(typeof (T));
-        }
-
-        public static string ToTsv<T>(this IEnumerable<T> collectionToSerialize, bool includeHeaders = true) where T : class
-        {
-            var data = string.Join("", collectionToSerialize.Select(x => x.ToTsvDataRow()));
-            return includeHeaders ? string.Concat(TsvFormatter.GetHeaderRow(typeof (T)), data) : data;
-        }
-        public static object GetDefault(Type type)
-        {
-            if (type.IsValueType)
-            {
-                return Activator.CreateInstance(type);
-            }
-            return null;
-        }
         public static object GetValue(object obj, Type type)
+        {
+            return IsNullableType(type) ? GetNullableValue(obj, type) : GetNonNullableValue(obj, type);
+        }
+
+        private static object GetNullableValue(object obj, Type nullableType)
+        {
+            var underlyingType = Nullable.GetUnderlyingType(nullableType);
+
+            if (string.IsNullOrEmpty(obj.ToString()))
+                return null;
+            else
+                return GetValue(obj, underlyingType);
+        }
+        private static object GetNonNullableValue(object obj, Type type)
         {
             if (obj != null)
             {
-                if (type == typeof (string))
+                var nullable = type.IsNullableType();
+                if (type == typeof(string))
                     return obj;
                 var value = GetDefault(type);
                 var methodInfo = (from m in type.GetMethods(BindingFlags.Public | BindingFlags.Static)
@@ -202,6 +195,38 @@ namespace TsvFormatter
 
             return GetDefault(type);
         }
+
+        public static object GetDefault(Type type)
+        {
+            if (type.IsValueType)
+            {
+                return Activator.CreateInstance(type);
+            }
+            return null;
+        }
+    }
+
+    public static class TsvExtensions
+    {
+        public static string ToTsvDataRow<T>(this T objToSerialize) where T : class
+        {
+            var properties = TsvFormatter.GetSerializablePropertiesInOrder(typeof (T));
+
+            return TsvFormatter.GetTsvRow(properties, objToSerialize);
+        }
+
+        public static string ToTsvHeaderRow<T>(this T objToSerialize) where T : class
+        {
+            return TsvFormatter.GetHeaderRow(typeof (T));
+        }
+
+        public static string ToTsv<T>(this IEnumerable<T> collectionToSerialize, bool includeHeaders = true) where T : class
+        {
+            var data = string.Join("", collectionToSerialize.Select(x => x.ToTsvDataRow()));
+            return includeHeaders ? string.Concat(TsvFormatter.GetHeaderRow(typeof (T)), data) : data;
+        }
+    
+     
         public static T FromTsvRow<T>(this string tsvString) where T : new()
         {
             if (string.IsNullOrEmpty(tsvString))
@@ -215,7 +240,10 @@ namespace TsvFormatter
             var index = 0;
             foreach (var p in propsDic.OrderBy(x => x.Key))
             {
-                var value = GetValue(tsvValues[index],p.Value.Value);
+                var value = TsvConfig.DeserialzeFnDictionary.ContainsKey(p.Value.Value)
+                    ? TsvConfig.DeserialzeFnDictionary[p.Value.Value](tsvValues[index])
+                    : TsvFormatter.GetValue(tsvValues[index],p.Value.Value);
+
                 type.GetProperty(p.Value.Key).SetValue(obj, value);
                 index++;
             }
